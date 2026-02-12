@@ -1,0 +1,115 @@
+version: '3.8'
+
+# Observability Stack: Prometheus + Loki + Grafana
+# This file defines all monitoring containers
+
+networks:
+  test-network:
+    external: true  # Use the same network as your app containers
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+
+services:
+  # Prometheus: Collects metrics from containers and system
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    networks:
+      - test-network
+    ports:
+      - "9090:9090"  # Access Prometheus UI at http://YOUR_EC2_IP:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    restart: always
+
+  # Loki: Stores logs from all containers
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    networks:
+      - test-network
+    ports:
+      - "3100:3100"  # Internal use (Grafana connects here)
+    volumes:
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: always
+
+  # Promtail: Reads Docker logs and sends them to Loki
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    networks:
+      - test-network
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    restart: always
+    depends_on:
+      - loki
+
+  # Grafana: Beautiful UI to visualize metrics and logs
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    networks:
+      - test-network
+    ports:
+      - "3000:3000"  # Access Grafana at http://YOUR_EC2_IP:3000
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: always
+    depends_on:
+      - prometheus
+      - loki
+
+  # Node Exporter: Exposes system metrics (CPU, memory, disk, network)
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    networks:
+      - test-network
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: always
+
+  # cAdvisor: Exposes container metrics (CPU, memory per container)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    networks:
+      - test-network
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    restart: always
+

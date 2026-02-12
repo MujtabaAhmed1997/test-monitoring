@@ -1,0 +1,48 @@
+# Promtail Configuration
+# This tells Promtail where to read logs from and where to send them
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push  # Send logs to Loki
+
+scrape_configs:
+  # Scrape Docker container logs from filesystem
+  - job_name: docker
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker
+          __path__: /var/lib/docker/containers/*/*-json.log
+    
+    pipeline_stages:
+      # Parse Docker JSON log format
+      - json:
+          expressions:
+            output: log
+            stream: stream
+      
+      # Extract container ID from log file path
+      - regex:
+          expression: '/var/lib/docker/containers/(?P<container_id>[a-z0-9]+)/.*'
+          source: filename
+      
+      # Use Docker API to get container name from container ID
+      - docker: {}
+      
+      # Set labels for filtering
+      - labels:
+          stream:
+          container_id:
+          container_name:
+      
+      # Output the actual log message
+      - output:
+          source: output
+
